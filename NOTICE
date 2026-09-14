@@ -1,0 +1,11 @@
+AppVault (iOS)
+Copyright (c) Sign3 Technologies Private Limited
+
+This product fronts and depends on third-party open-source software:
+
+- swift-confidential (runtime "ConfidentialKit" + the obfuscation generator)
+  https://github.com/securevale/swift-confidential
+  Licensed under the Apache License, Version 2.0.
+
+The AppVault build-tool plugin invokes swift-confidential's prebuilt generator and re-exports its
+runtime; AppVault does not modify or fork the engine.
