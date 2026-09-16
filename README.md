@@ -23,7 +23,7 @@ https://github.com/Sign3labs/app-vault-ios
 ```
 Or in a `Package.swift`:
 ```swift
-.package(url: "https://github.com/Sign3labs/app-vault-ios", from: "1.0.0")
+.package(url: "https://github.com/Sign3labs/app-vault-ios", from: "0.1.0")
 ```
 
 Add to your app target:

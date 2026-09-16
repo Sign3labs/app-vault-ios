@@ -12,7 +12,7 @@ let package = Package(
     ],
     dependencies: [
         // We front this engine; consumers never name it.
-        .package(url: "https://github.com/securevale/swift-confidential.git", .upToNextMinor(from: "0.5.2")),
+        .package(url: "https://github.com/securevale/swift-confidential.git", exact: "0.5.2"),
     ],
     targets: [
         .target(
