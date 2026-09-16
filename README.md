@@ -39,8 +39,16 @@ In an Xcode app target: add the **AppVault** library under *Frameworks, Librarie
 **AppVaultPlugin** build-tool plugin under *Build Phases → Run Build Tool Plug-ins*.
 
 ## Step 2 — Declare your secrets in `appvault.yml`
-Place `appvault.yml` at your target's source directory (SwiftPM) or the Xcode **project's top-level
-directory**:
+
+**Where the file goes** — the plugin looks in exactly one place, and finding nothing is not an error:
+
+| Integration | Location |
+|---|---|
+| Xcode project | The **project's top-level directory** (next to `.xcodeproj`) |
+| SwiftPM target | The **target's source directory** (e.g. `Sources/MyApp/`) |
+
+Either `appvault.yml` or `appvault.yaml` is accepted.
+
 ```yaml
 algorithm:
   - encrypt using aes-256-gcm
@@ -52,7 +60,32 @@ secrets:
     value: your-real-secret-here
   - name: baseURL
     value: https://api.example.com/v1
+  # A list value generates a [String]
+  - name: suspiciousPaths
+    value:
+      - /usr/sbin/frida-server
+      - /Applications/Cydia.app
 ```
+
+### Configuration reference
+
+| Key | Meaning |
+|---|---|
+| `algorithm` | Ordered list of techniques applied to every secret. Compose your own and keep it private. Use `random` for a per-secret random algorithm. |
+| `defaultNamespace` | `create <Name>` generates the namespace; `extend <Name>` adds to one you already declare. |
+| `defaultAccessModifier` | `internal` (default), `public`, or `package`. |
+| `secrets[].name` | Becomes `AppVaultSecrets.$<name>`. |
+| `secrets[].value` | A single value generates a `String`; a YAML list generates a `[String]`. |
+
+Per-secret `algorithm`, `namespace`, and `accessModifier` keys override the defaults above.
+
+**Available techniques for `algorithm`:**
+
+| Syntax | Options |
+|---|---|
+| `encrypt using <alg>` | `aes-128-gcm`, `aes-192-gcm`, `aes-256-gcm`, `chacha20-poly` |
+| `compress using <alg>` | `lzfse`, `lz4`, `lzma`, `zlib` |
+| `shuffle` | *(no options)* |
 
 ## Step 3 — Use the deobfuscated values
 The plugin generates an `AppVaultSecrets` namespace at build time. Read values via the `$` projection:
@@ -63,6 +96,39 @@ let secret  = AppVaultSecrets.$clientSecret
 let baseURL = AppVaultSecrets.$baseURL
 ```
 No plaintext for these values lands in the binary; they are reconstructed at runtime.
+
+`AppVaultSecrets` is generated into **build intermediates**, not into your source tree, so it will not
+appear in the Xcode navigator and must not be committed. Adding a secret is therefore two steps and a
+build: add the YAML entry, reference `AppVaultSecrets.$name`, rebuild.
+
+## Verifying it worked
+Check the built binary directly — a secret that is still plaintext will show up here:
+```bash
+strings -a "$APP_PATH/YourApp" | grep -c 'your-real-secret-here'   # expect 0
+```
+
+---
+
+## Troubleshooting
+
+**`cannot find 'AppVaultSecrets' in scope`**
+The plugin found no config and generated nothing — it does **not** fail the build when `appvault.yml` is
+missing or misplaced. Confirm the file is in the exact location from the table in Step 2 (the *project*
+directory for Xcode, the *target's source* directory for SwiftPM), and that the plugin is listed under
+*Build Phases → Run Build Tool Plug-ins* for the target being built.
+
+**`Internal error … malformed response` from the plugin in a headless build**
+Caused by passing `-sdk` to `xcodebuild`. AppVault's generator is a macOS host tool, and `-sdk
+iphonesimulator` forces it onto the simulator SDK, which corrupts the plugin protocol. Specify the
+destination only:
+```bash
+xcodebuild -scheme YourApp -destination 'generic/platform=iOS' archive   # correct
+xcodebuild -scheme YourApp -sdk iphonesimulator ...                      # breaks the plugin
+```
+Building from Xcode's GUI is unaffected.
+
+**First build is slow.** The plugin's macro toolchain is compiled once per derived-data directory.
+Subsequent builds are incremental.
 
 ---
 
