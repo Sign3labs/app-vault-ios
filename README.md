@@ -21,7 +21,7 @@ Four steps: add the package, enable the plugin, declare your secrets, read them 
 ```
 https://github.com/Sign3labs/app-vault-ios
 ```
-Choose **Up to Next Major Version** starting from `0.1.0`, then add the package to your project.
+Choose **Exact Version** and type the version number from the latest release, then add the package to your project.
 
 **In a `Package.swift`:**
 ```swift
@@ -81,7 +81,7 @@ MyPackage/
         └── App.swift
 ```
 
-The name can be `appvault.yml` or `appvault.yaml`. Both work.
+The name can be `appvault.yml` or `appvault.yaml`. Both works.
 
 > **If the plugin cannot find the file, your build still succeeds.** It simply generates nothing, with
 > no warning. You find out later, when the compiler says `cannot find 'AppVaultSecrets' in scope`. If
