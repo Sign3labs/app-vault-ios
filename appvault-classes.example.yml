@@ -1,0 +1,18 @@
+# appvault-classes.yml -- config for class-scoped string obfuscation (Part 1).
+#
+# The build hook reads every .swift file under `sources`, obfuscates the string literals inside the
+# `classes` listed, and writes the transformed copies into `output`. Originals are never modified.
+#
+# IMPORTANT: keep `sources` OUTSIDE your target's compiled sources, and compile `output` instead
+# (see README "Class-scoped obfuscation"). Otherwise both the plaintext original and the obfuscated
+# copy compile, causing duplicate-symbol errors.
+
+sources:
+  - Protected          # folder(s) or file(s) holding the classes to protect (not compiled directly)
+
+output: .build/appvault-obfuscated   # generated mirror the build compiles
+
+classes:
+  - ApiClient
+  - LoginManager
+  # - "*"              # or obfuscate every class found (review the SwiftUI/@objc caveats first)

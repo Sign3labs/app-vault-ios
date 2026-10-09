@@ -155,3 +155,77 @@ Two edits and a build:
    ```
 2. Reference it in code as `AppVaultSecrets.$newToken`.
 3. Build — the plugin regenerates the namespace with the new entry included.
+
+---
+
+# Class-scoped obfuscation (Part 1)
+
+The steps above obfuscate strings you **declare by hand** in `appvault.yml`. This mode instead lets
+you point at a **class by name** and obfuscate every string literal already written inside it — the
+plaintext is removed from the binary and reconstructed at runtime by the same engine.
+
+## How it works
+
+A pre-build step rewrites each target literal into a reference to a generated, encrypted namespace:
+
+```swift
+// you write:
+class ApiClient {
+    let baseURL = "https://api.example.com"
+}
+
+// the build compiles (plaintext gone; encrypted by #Obfuscate at compile time):
+class ApiClient {
+    let baseURL = __AppVaultSecrets_ApiClient_ApiClient.$s0
+}
+private enum __AppVaultSecrets_ApiClient_ApiClient {
+    static #Obfuscate(algorithm: .custom([.encrypt(algorithm: .aes256GCM), .shuffle])) {
+        let s0 = "https://api.example.com"
+    }
+}
+```
+
+Your original source is never modified: protected files stay in their own folder, and the build
+compiles a transformed **mirror** of them.
+
+## Setup
+
+1. **Move the classes to protect into a folder that your target does not compile directly**, e.g.
+   `Protected/`. (In an Xcode target, untick Target Membership for those files; in SwiftPM, keep the
+   folder outside `Sources/<target>/`.)
+
+2. **Add `appvault-classes.yml`** (see `appvault-classes.example.yml`):
+   ```yaml
+   sources:
+     - Protected
+   output: .build/appvault-obfuscated
+   classes:
+     - ApiClient
+     - LoginManager
+   ```
+
+3. **Compile the generated `output` folder** instead of the originals (add it to the target / its
+   Compile Sources).
+
+4. **Run the obfuscator before every build.** In Xcode, add a Run Script phase *before* Compile
+   Sources:
+   ```sh
+   APPVAULT_DIR="$SRCROOT/path/to/AppVault" "${APPVAULT_DIR}/Scripts/appvault-build-phase.sh"
+   ```
+
+### Dry run
+
+See what would be obfuscated without changing anything:
+```sh
+swift run appvault-scan --class ApiClient Protected/
+```
+
+## Caveats
+
+- **Interpolated literals** (`"id=\(x)"`) are left untouched — they can't be static secrets.
+- Replacing a literal with a runtime `String` can change meaning where the literal is **not** a
+  plain `String`: SwiftUI `Text("…")` / `Image("…")` (`LocalizedStringKey`), `#selector`, `@objc`
+  names, and dictionary-literal keys. Keep those classes out of `classes:`, or split the literal
+  out. UIKit controller/manager code is generally safe.
+- This hides literals from **static** analysis. It is not a substitute for RASP or symbol-level
+  (class-name) obfuscation.
