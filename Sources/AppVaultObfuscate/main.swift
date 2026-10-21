@@ -24,30 +24,60 @@ var paths: [String] = []
 var mode: WriteMode = .preview
 var suffix = ".obf.swift"
 var configPath: String?
+var inPlaceRequested = false
+var outputPath: String?
+var stageConfigPath: String?
+var restoreDir: String?
+var backupDir: String?
 
 var args = Array(CommandLine.arguments.dropFirst())
 var i = 0
+
+@MainActor func die(_ msg: String) -> Never {
+    FileHandle.standardError.write(Data("error: \(msg)\n".utf8)); exit(2)
+}
+// Consume the value after a value-taking flag. Error if it is missing or is itself a flag --
+// so `--class --in-place` no longer swallows `--in-place` as the class name, and a value left
+// off the end of the command no longer silently no-ops.
+@MainActor func requireValue(_ flag: String) -> String {
+    guard i + 1 < args.count else { die("\(flag) requires a value") }
+    let v = args[i + 1]
+    if v.hasPrefix("-") && v != "-" { die("\(flag) requires a value (got flag '\(v)')") }
+    i += 1
+    return v
+}
 while i < args.count {
     switch args[i] {
     case "--config":
-        i += 1; if i < args.count { configPath = args[i] }
+        configPath = requireValue("--config")
+    case "--stage-config":
+        stageConfigPath = requireValue("--stage-config")
+    case "--backup":
+        backupDir = requireValue("--backup")
+    case "--restore":
+        restoreDir = requireValue("--restore")
     case "--class", "-c":
-        i += 1
-        if i < args.count {
-            if args[i] == "*" { allClasses = true } else { targetClasses.insert(args[i]) }
-        }
+        let v = requireValue("--class")
+        if v == "*" { allClasses = true } else { targetClasses.insert(v) }
     case "--in-place":
-        mode = .inPlace
+        inPlaceRequested = true
     case "--output", "-o":
-        i += 1; if i < args.count { mode = .output(args[i]) }
+        outputPath = requireValue("--output")
     case "--suffix":
-        i += 1; if i < args.count { suffix = args[i] }
+        suffix = requireValue("--suffix")
     case "-h", "--help":
         print("""
         appvault-obfuscate -- rewrite string literals inside named classes
 
         USAGE:
+          # Build-time, in-place (source restored after compile):
+          appvault-obfuscate --stage-config <appvault-classes.yml> --backup <dir>
+          appvault-obfuscate --restore <dir>
+
+          # Mirror (compile a transformed copy; originals kept out of the target):
           appvault-obfuscate --config <appvault-classes.yml>
+
+          # Ad-hoc:
           appvault-obfuscate --class <Name|*> [--class <Name>...] <file-or-dir>...
                              [--in-place | --output <file>] [--suffix .obf.swift]
         """)
@@ -56,6 +86,44 @@ while i < args.count {
         paths.append(args[i])
     }
     i += 1
+}
+
+// --in-place and --output both write the transformed source; together they are ambiguous and one
+// ordering would silently overwrite the user's original. Reject rather than guess.
+if inPlaceRequested && outputPath != nil {
+    die("--in-place and --output are mutually exclusive")
+}
+if let outputPath {
+    mode = .output(outputPath)
+} else if inPlaceRequested {
+    mode = .inPlace
+}
+
+// ---- Restore (post-compile build phase, or self-heal) ------------------------------------------
+if let restoreDir {
+    do {
+        let s = try InPlaceRunner.restore(backupDir: restoreDir)
+        print("AppVault restore: \(s.filesRestored) file(s) restored to pristine source.")
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("error: \(error)\n".utf8)); exit(1)
+    }
+}
+
+// ---- Stage: in-place build-time obfuscation (pre-compile build phase) ---------------------------
+if let stageConfigPath {
+    guard let backupDir else { die("--stage-config requires --backup <dir>") }
+    do {
+        let config = try ConfigLoader.load(path: stageConfigPath)
+        let s = try InPlaceRunner.stage(config: config, backupDir: backupDir)
+        let scope = config.allClasses ? "all classes" : config.classes.sorted().joined(separator: ", ")
+        print("AppVault stage (in place): \(scope)")
+        print("  \(s.filesObfuscated) file(s) obfuscated, \(s.literalsObfuscated) literal(s) hidden, "
+            + "\(s.literalsSkipped) skipped (interpolated), \(s.filesBackedUp) backed up.")
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("error: \(error)\n".utf8)); exit(1)
+    }
 }
 
 // ---- Config / mirror mode ----------------------------------------------------------------------
@@ -95,13 +163,17 @@ for f in allFiles {
     }
     let base = ((f as NSString).lastPathComponent as NSString).deletingPathExtension
     let result = SourceObfuscator.obfuscate(source: text, fileBase: base, targets: targetClasses, allClasses: allClasses)
-    guard result.rewrittenCount > 0 else { continue }
 
     let dest: String
     switch mode {
     case .preview:  dest = (f as NSString).deletingPathExtension + suffix
     case .inPlace:  dest = f
     case .output(let out): dest = out
+    }
+    // Preview/in-place emit only when something was obfuscated; explicit --output always writes
+    // (verbatim if nothing matched) so a build step compiling the output never hits "no such file".
+    if result.rewrittenCount == 0 {
+        if case .output = mode {} else { continue }
     }
     do {
         try result.transformedSource.write(toFile: dest, atomically: true, encoding: .utf8)

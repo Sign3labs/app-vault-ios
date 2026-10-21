@@ -1,93 +1,71 @@
 # AppVault (iOS)
 
-**AppVault** is a Swift Package for **compile-time string obfuscation**, offered by **Sign3**. Secret
-literals are encrypted at build time and transparently deobfuscated at runtime, so sensitive strings —
-endpoints, API keys/secrets, detection signatures — do not appear as plaintext in the app binary.
+**AppVault**, by **Sign3**, hides secret text in your iOS app. Things like API keys, passwords, and
+URLs will not show up as plain readable words inside the finished app.
 
 ---
 
-## Requirements
-- Xcode 16+ / Swift 6 toolchain (build-time plugin is macOS-only; the runtime is iOS 13+).
+## Why you need this
+
+When you write a secret in your code like this:
+
+```swift
+let apiKey = "my-secret-key-123"
+```
+
+the words `my-secret-key-123` sit inside your finished app as plain text. Anyone can open the app
+file with simple tools and read it. That is a security risk.
+
+AppVault scrambles these secrets **while the app is being built**. The readable version never goes
+into the final app. When the app runs, it still gets the real value back. A person looking at the app
+file sees only scrambled bytes.
 
 ---
 
-# Integration
+## What you need
 
-Four steps: add the package, enable the plugin, declare your secrets, read them in code.
+- A Mac with **Xcode 16 or newer**.
+- An iOS app project.
 
-## Step 1 — Add the package
+---
 
-**In Xcode:** **File → Add Package Dependencies…** → enter the repository URL:
+## Two ways to use it
+
+| Way | When to use it | What you do |
+|---|---|---|
+| **Way 1 - List your secrets** | You have a few known secrets, like one API key. | You write each secret in a small file. |
+| **Way 2 - Point at a folder** (easiest) | You already have classes full of secret text. | You name a folder. Everything in it is hidden for you. Your code does not change. |
+
+You can use both ways in the same app. Way 2 is the recommended one for most people.
+
+---
+
+# Way 1 - List your secrets
+
+You write your secrets in a small file. AppVault scrambles them. In your code you read them by name.
+
+## Step 1 - Add AppVault to your app
+
+In Xcode, click **File menu → Add Package Dependencies**. Paste this address:
+
 ```
 https://github.com/Sign3labs/app-vault-ios
 ```
-Choose **Exact Version** and type the version number from the latest release, then add the package to your project.
 
-**In a `Package.swift`:**
-```swift
-.package(url: "https://github.com/Sign3labs/app-vault-ios", from: "0.1.0")
-```
+Choose **Exact Version** and type the latest one (**0.2.0**). Click **Add Package**.
 
-## Step 2 — Attach the library and the plugin to your target
+## Step 2 - Turn on the two parts
 
-Both are required: the library is the runtime, the plugin does the build-time obfuscation.
+Open your app target's settings:
 
-**In Xcode**, select your app target, then:
+- **General → Frameworks, Libraries, and Embedded Content** → add **AppVault**.
+- **Build Phases → Run Build Tool Plug-ins** → add **AppVaultPlugin**.
 
-| Where | What to add |
-|---|---|
-| *General → Frameworks, Libraries, and Embedded Content* | **AppVault** |
-| *Build Phases → Run Build Tool Plug-ins* | **AppVaultPlugin** |
+(One part runs inside your app. The other does the scrambling while the app builds.)
 
-**In a `Package.swift` target:**
-```swift
-.target(
-    name: "MyApp",
-    dependencies: [
-        .product(name: "AppVault", package: "app-vault-ios"),
-    ],
-    plugins: [
-        .plugin(name: "AppVaultPlugin", package: "app-vault-ios"),
-    ]
-)
-```
+## Step 3 - Make a file named `appvault.yml`
 
-## Step 3 — Declare your secrets in `appvault.yml`
-
-`appvault.yml` is a plain text file where you list the strings you want hidden. You write them out
-normally here — AppVault encrypts them while your app is building, and the readable version never
-reaches the shipped app. The file stays in your source repo; it is never bundled.
-
-### Where to put the file
-
-The plugin checks **one folder only**. Put the file in the folder that matches how you integrated:
-
-**Xcode project** — beside your `.xcodeproj`, at the top level of the project:
-```
-MyApp/
-├── MyApp.xcodeproj
-├── appvault.yml        ← here
-└── MyApp/
-    └── AppDelegate.swift
-```
-
-**SwiftPM package** — inside the target's own source folder:
-```
-MyPackage/
-├── Package.swift
-└── Sources/
-    └── MyApp/
-        ├── appvault.yml    ← here
-        └── App.swift
-```
-
-The name can be `appvault.yml` or `appvault.yaml`. Both works.
-
-> **If the plugin cannot find the file, your build still succeeds.** It simply generates nothing, with
-> no warning. You find out later, when the compiler says `cannot find 'AppVaultSecrets' in scope`. If
-> you hit that error, check this folder first — a misplaced file is the usual cause.
-
-### What goes in the file
+This is a plain text file where you list your secrets. Put it right next to your `.xcodeproj` file.
 
 ```yaml
 algorithm:
@@ -96,136 +74,173 @@ algorithm:
 defaultNamespace: create AppVaultSecrets
 defaultAccessModifier: internal
 secrets:
-  - name: clientSecret
-    value: your-real-secret-here
+  - name: apiKey
+    value: my-secret-key-123
   - name: baseURL
-    value: https://api.example.com/v1
-  - name: suspiciousPaths
-    value:
-      - /usr/sbin/frida-server
-      - /Applications/Cydia.app
+    value: https://api.example.com
 ```
 
-Reading it line by line:
+What each line means, in simple words:
 
-- **`algorithm`** — how each value is scrambled. The steps run in the order you list them. The two
-  above are a sensible default; you can keep them as they are.
-- **`defaultNamespace`** — `create AppVaultSecrets` tells AppVault to generate a container called
-  `AppVaultSecrets`. This is the name you will type in your code.
-- **`defaultAccessModifier`** — `internal` means the secrets are visible inside your own module,
-  which is what an app target wants. Use `public` only if another module needs to read them.
-- **`secrets`** — one entry per string. `name` is what you call it in code
-  (`clientSecret` becomes `AppVaultSecrets.$clientSecret`), and `value` is the real string.
-- **A value written as a list** — like `suspiciousPaths` above — comes back as a `[String]` array
-  instead of a single `String`.
+- **algorithm** - how to scramble. Just leave it as shown.
+- **defaultNamespace** - the name you will type in your code. Leave it as `AppVaultSecrets`.
+- **defaultAccessModifier** - who can use the secrets. `internal` is fine for most apps.
+- **secrets** - your list. `name` is what you call it in code. `value` is the real secret.
 
-### Adding the file to an Xcode project
+**One important thing:** click the file in Xcode, open the panel on the right, and under
+*Target Membership* make sure **no box is ticked**. If a box is ticked, Xcode copies the plain secret
+into the app, which cancels the whole point.
 
-Drag `appvault.yml` into the project navigator so you can see and edit it. Then select it, open the
-**File inspector** on the right, and under *Target Membership* make sure **no target is ticked**.
+> If Xcode cannot find this file, your app still builds but nothing gets scrambled. Later you will see
+> the error `cannot find 'AppVaultSecrets'`. If that happens, check this file's location first.
 
-This matters. The plugin reads the file at build time, so it does not need to be part of the target.
-If a target *is* ticked, Xcode copies the file into the app bundle — which would ship the plain,
-readable secrets right next to the encrypted ones, undoing the whole point.
-
-## Step 4 — Use the deobfuscated values
-
-The plugin generates an `AppVaultSecrets` namespace at build time. Read values via the `$` projection:
+## Step 4 - Use your secrets in code
 
 ```swift
 import AppVault
 
-let secret  = AppVaultSecrets.$clientSecret
-let baseURL = AppVaultSecrets.$baseURL
+let key = AppVaultSecrets.$apiKey
+let url = AppVaultSecrets.$baseURL
 ```
 
-No plaintext for these values lands in the binary; they are reconstructed at runtime.
+See the `$` sign. That gives you the real value, rebuilt when the app runs.
 
-`AppVaultSecrets` is generated into **build intermediates**, not into your source tree, so it will not
-appear in the Xcode navigator and must not be committed.
+**How it flows:**
 
-## Adding a secret later
-
-Two edits and a build:
-
-1. Add an entry to `appvault.yml`:
-   ```yaml
-     - name: newToken
-       value: my-new-secret-value
-   ```
-2. Reference it in code as `AppVaultSecrets.$newToken`.
-3. Build — the plugin regenerates the namespace with the new entry included.
+```mermaid
+flowchart TD
+    A["appvault.yml<br/>your secrets in plain text"] --> B["While building:<br/>AppVault scrambles them"]
+    D["Your code:<br/>AppVaultSecrets.$apiKey"] --> C
+    B --> C["App file<br/>no readable secrets"]
+    C -->|when the app runs| E["real value comes back"]
+```
 
 ---
 
-# Class-scoped obfuscation (Part 1)
+# Way 2 - Point at a folder (recommended)
 
-The steps above obfuscate strings you **declare by hand** in `appvault.yml`. This mode instead lets
-you point at a **class by name** and obfuscate every string literal already written inside it — the
-plaintext is removed from the binary and reconstructed at runtime by the same engine.
+This is the easiest way. You keep your code exactly as it is. You only tell AppVault which folder
+holds your secret classes. While building, AppVault hides all the text in those classes, then puts
+your files back the way you wrote them. After the build, your files look unchanged.
 
-## How it works
+## What happens (simple picture)
 
-A pre-build step rewrites each target literal into a reference to a generated, encrypted namespace:
-
-```swift
-// you write:
-class ApiClient {
-    let baseURL = "https://api.example.com"
-}
-
-// the build compiles (plaintext gone; encrypted by #Obfuscate at compile time):
-class ApiClient {
-    let baseURL = __AppVaultSecrets_ApiClient_ApiClient.$s0
-}
-private enum __AppVaultSecrets_ApiClient_ApiClient {
-    static #Obfuscate(algorithm: .custom([.encrypt(algorithm: .aes256GCM), .shuffle])) {
-        let s0 = "https://api.example.com"
-    }
-}
+```mermaid
+flowchart TD
+    A["You write normal code,<br/>secrets as plain text"] --> B["Step 1 - Hide:<br/>secrets scrambled in your files,<br/>originals saved"]
+    B --> C["Step 2 - Build:<br/>app made from the scrambled code"]
+    C --> D["Step 3 - Put back:<br/>your files restored exactly as before"]
+    D --> E["Done: app has no readable secrets,<br/>your code is unchanged"]
 ```
 
-Your original source is never modified: protected files stay in their own folder, and the build
-compiles a transformed **mirror** of them.
+## Step 1 - Add AppVault to your app
 
-## Setup
+Same as Way 1, Step 1 above.
 
-1. **Move the classes to protect into a folder that your target does not compile directly**, e.g.
-   `Protected/`. (In an Xcode target, untick Target Membership for those files; in SwiftPM, keep the
-   folder outside `Sources/<target>/`.)
+## Step 2 - Make a file named `appvault-classes.yml`
 
-2. **Add `appvault-classes.yml`** (see `appvault-classes.example.yml`):
-   ```yaml
-   sources:
-     - Protected
-   output: .build/appvault-obfuscated
-   classes:
-     - ApiClient
-     - LoginManager
-   ```
+Put it right next to your `.xcodeproj` file. Write the folder that holds your secret classes:
 
-3. **Compile the generated `output` folder** instead of the originals (add it to the target / its
-   Compile Sources).
+```yaml
+packages:
+  - MyApp/Secure
+```
 
-4. **Run the obfuscator before every build.** In Xcode, add a Run Script phase *before* Compile
-   Sources:
-   ```sh
-   APPVAULT_DIR="$SRCROOT/path/to/AppVault" "${APPVAULT_DIR}/Scripts/appvault-build-phase.sh"
-   ```
+That is all. Every class inside the `MyApp/Secure` folder is handled for you. You do **not** list
+classes one by one.
 
-### Dry run
+## Step 3 - Set up the build steps (one command)
 
-See what would be obfuscated without changing anything:
+AppVault needs to run two small steps during a build: one to hide the secrets, one to put your files
+back. You do **not** have to add these by hand. Open **Terminal**, go to your project folder, and run
+this once:
+
+```bash
+ruby /path/to/AppVault/Scripts/appvault-setup.rb MyApp.xcodeproj
+```
+
+- Replace `/path/to/AppVault` with the folder where AppVault lives on your Mac.
+- Replace `MyApp.xcodeproj` with your project file name.
+- If it says the `xcodeproj` tool is missing, run `gem install xcodeproj` once, then try again.
+
+This command edits your project for you. You can run it again any time; it will not add anything twice.
+
+## Step 4 - Build your app
+
+That is it. Build and run like normal. Your secrets are now hidden in the app, and your code files
+look exactly the same as you wrote them.
+
+### If you want to do Step 3 by hand instead
+
+Add two **Run Script** phases to your app target (in **Build Phases**), and set
+**Build Settings → User Script Sandboxing → No**.
+
+| Order | Name | Command to paste |
+|---|---|---|
+| Put it **above** "Compile Sources" | AppVault Stage | `"$APPVAULT_DIR/Scripts/appvault-inplace.sh" stage` |
+| Put it as the **last** phase | AppVault Restore | `"$APPVAULT_DIR/Scripts/appvault-inplace.sh" restore` |
+
+In each script, set `APPVAULT_DIR` to the AppVault folder first, for example:
+
 ```sh
-swift run appvault-scan --class ApiClient Protected/
+APPVAULT_DIR="$SRCROOT/path/to/AppVault"
+"$APPVAULT_DIR/Scripts/appvault-inplace.sh" stage
 ```
 
-## Caveats
+Keep both phases, in this order. The first hides, the last puts back. If a build is cancelled in the
+middle, the next build fixes it by itself.
 
-- **Interpolated literals** (`"id=\(x)"`) are left untouched — they can't be static secrets.
-- Replacing a literal with a runtime `String` can change meaning where the literal is **not** a
-  plain `String`: SwiftUI `Text("…")` / `Image("…")` (`LocalizedStringKey`), `#selector`, `@objc`
-  names, and dictionary-literal keys. Keep those classes out of `classes:`, or split the literal
-  out. UIKit controller/manager code is generally safe.
-- This hides literals from **static** analysis. It is not a substitute for RASP or symbol-level
-  (class-name) obfuscation.
+---
+
+## How to check it really worked
+
+Build your app. Then look inside the built app for your secret. You should **not** find it.
+
+In Terminal:
+
+```bash
+strings "MyApp.app/MyApp.debug.dylib" | grep "my-secret-key-123"
+```
+
+If it prints nothing, the secret is hidden. (Tip: a secret you did *not* protect will still show up,
+which proves the check is real.)
+
+---
+
+## What to keep out of a protected folder (Way 2)
+
+Most normal classes are fine. A few kinds of text can break the build if they are hidden. If your app
+stops building after you protect a folder, move that class out of the folder. These are the ones to
+watch:
+
+- **Text shown in SwiftUI** like `Text("Hello")` or `Image("icon")`.
+- **Special Swift names** like `#selector(...)`, `@objc("name")`, and keys in a dictionary written
+  directly in code.
+- A value typed as `StaticString`, and a default value of a `public` function.
+
+These are already handled for you and left alone:
+
+- Text joined with a value, like `"Hello \(name)"`. This cannot be a fixed secret, so it stays.
+- Enum text values, like `case login = "/login"`. Swift needs these to stay as plain text.
+
+This hides secrets from someone reading the app file. It is one layer of protection, not a complete
+anti-tamper system.
+
+---
+
+## For developers - run the tests
+
+```bash
+cd AppVault
+swift test                       # 48 small tests
+./Scripts/inplace-test.sh        # full "hide, build, run, check, put back" test
+./Scripts/integration-test.sh    # the mirror build test
+./Scripts/cli-test.sh            # command-line checks
+```
+
+---
+
+## Versions
+
+AppVault uses version tags. Pin an exact version (`exact: "0.2.0"`) so your builds stay the same every
+time. See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.

@@ -9,16 +9,29 @@ import SwiftParser
 import AppVaultObfuscationCore
 
 var targetClasses: Set<String> = []
+var allClasses = false
 var paths: [String] = []
 var jsonOutput = false
 
 var args = Array(CommandLine.arguments.dropFirst())
 var i = 0
+
+@MainActor func requireValue(_ flag: String) -> String {
+    guard i + 1 < args.count else {
+        FileHandle.standardError.write(Data("error: \(flag) requires a value\n".utf8)); exit(2)
+    }
+    let v = args[i + 1]
+    if v.hasPrefix("-") && v != "-" {
+        FileHandle.standardError.write(Data("error: \(flag) requires a value (got flag '\(v)')\n".utf8)); exit(2)
+    }
+    i += 1
+    return v
+}
 while i < args.count {
     switch args[i] {
     case "--class", "-c":
-        i += 1
-        if i < args.count { targetClasses.insert(args[i]) }
+        let v = requireValue("--class")
+        if v == "*" { allClasses = true } else { targetClasses.insert(v) }
     case "--json":
         jsonOutput = true
     case "-h", "--help":
@@ -35,8 +48,8 @@ while i < args.count {
     i += 1
 }
 
-guard !targetClasses.isEmpty else {
-    FileHandle.standardError.write(Data("error: provide at least one --class <Name>\n".utf8)); exit(2)
+guard allClasses || !targetClasses.isEmpty else {
+    FileHandle.standardError.write(Data("error: provide at least one --class <Name> (or --class '*')\n".utf8)); exit(2)
 }
 guard !paths.isEmpty else {
     FileHandle.standardError.write(Data("error: provide at least one file or directory\n".utf8)); exit(2)
@@ -49,7 +62,7 @@ for f in allFiles {
         FileHandle.standardError.write(Data("warning: could not read \(f)\n".utf8)); continue
     }
     let tree = Parser.parse(source: text)
-    let collector = ClassStringCollector(targets: targetClasses, file: f, tree: tree)
+    let collector = ClassStringCollector(targets: targetClasses, file: f, tree: tree, allClasses: allClasses)
     collector.walk(tree)
     all.append(contentsOf: collector.findings)
 }
@@ -61,7 +74,8 @@ if jsonOutput {
 } else {
     let obfuscatable = all.filter { !$0.interpolated }
     let skipped = all.filter { $0.interpolated }
-    print("Scanned \(allFiles.count) file(s) for class(es): \(targetClasses.sorted().joined(separator: ", "))")
+    let scope = allClasses ? "all classes" : targetClasses.sorted().joined(separator: ", ")
+    print("Scanned \(allFiles.count) file(s) for class(es): \(scope)")
     print("Found \(all.count) string literal(s): \(obfuscatable.count) obfuscatable, \(skipped.count) skipped (interpolated).\n")
     for f in all {
         let tag = f.interpolated ? "  [skip: interpolated]" : ""

@@ -47,6 +47,10 @@ class ApiClient {
     func endpoint(_ path: String) -> String { baseURL + "/v2/" + path }  // "/v2/" obfuscated too
     func greeting(_ name: String) -> String { "hello \(name)" }           // interpolated -> skipped
     class Pinner { let spki = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }   // nested -> obfuscated
+    enum Route: String { case login = "/login"; case logout = "/logout" }  // raw values MUST stay literal
+}
+extension ApiClient {
+    func authHeader() -> String { "x-ext-secret-9f8e7d6c" }                 // extension literal -> obfuscated
 }
 EOF
 
@@ -71,6 +75,8 @@ print("apiKey=" + c.apiKey)
 print("endpoint=" + c.endpoint("users"))
 print("greeting=" + c.greeting("sahil"))
 print("spki=" + ApiClient.Pinner().spki)
+print("route=" + ApiClient.Route.login.rawValue)
+print("header=" + ApiClient().authHeader())
 print("flag=" + FeatureFlag.control)
 EOF
 
@@ -97,6 +103,8 @@ check_runtime "apiKey=sk-live-9f8e7d6c5b4a"
 check_runtime "endpoint=https://api.secret-bank.example/v2/users"
 check_runtime "greeting=hello sahil"
 check_runtime "spki=sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+check_runtime "route=/login"
+check_runtime "header=x-ext-secret-9f8e7d6c"
 check_runtime "flag=control-plaintext-visible"
 
 echo "== scanning compiled binary for plaintext =="
@@ -107,7 +115,9 @@ hidden "https://api.secret-bank.example"
 hidden "sk-live-9f8e7d6c5b4a"
 hidden "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 hidden "/v2/"
-# interpolated and non-target literals are expected to remain visible:
+hidden "x-ext-secret-9f8e7d6c"    # extension literal obfuscated
+# interpolated, enum-raw-value, and non-target literals are expected to remain visible:
+present "/login"                  # enum raw value stays a literal (and the app compiled with it)
 present "control-plaintext-visible"
 present "hello "
 

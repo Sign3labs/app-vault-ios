@@ -99,4 +99,28 @@ final class RobustnessTests: XCTestCase {
         let r = obf(src, [], all: true)
         XCTAssertEqual(r.rewrittenCount, 300)
     }
+
+    func testBlankLineHeavyFileDoesNotHang() {
+        // Regression guard for the import-detection step. A regex using \s* over the whole source
+        // was O(N^2) on long blank-line runs (each line-start retried the match across every
+        // following newline), so this input hung for seconds. The linear scan must stay fast.
+        let src = "class A { let x = \"s\" }\n" + String(repeating: "\n", count: 100_000)
+        let start = Date()
+        let r = obf(src, ["A"])
+        let elapsed = Date().timeIntervalSince(start)
+        XCTAssertEqual(r.rewrittenCount, 1)
+        XCTAssertLessThan(elapsed, 5.0, "import check must be linear; \(elapsed)s suggests the O(N^2) regex is back")
+    }
+
+    func testManyImportCandidatesAndBlankLinesStayFast() {
+        // Lots of non-matching import-like lines plus blank lines: still must be linear.
+        var src = "class A { let x = \"s\" }\n"
+        for i in 0..<20_000 { src += "import Foo\(i)\n\n" }
+        let start = Date()
+        let r = obf(src, ["A"])
+        XCTAssertEqual(r.rewrittenCount, 1)
+        XCTAssertTrue(r.transformedSource.hasPrefix("import AppVault\n"),
+                      "AppVault import injected since none of the Foo imports match")
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5.0)
+    }
 }
