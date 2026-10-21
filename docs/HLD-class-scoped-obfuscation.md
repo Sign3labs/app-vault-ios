@@ -1,8 +1,8 @@
 # HLD — Class-Scoped String Obfuscation (AppVault Part 1)
 
-**Status:** Implemented, tested, released in AppVault `0.1.1`
+**Status:** Implemented, tested; in-place package mode + hardening in AppVault `0.2.0`
 **Owner:** Sign3
-**Last updated:** 2026-10-09
+**Last updated:** 2026-10-19
 
 ---
 
@@ -87,11 +87,20 @@ private enum __AppVaultSecrets_ApiClient_ApiClient {
 }
 ```
 
-Rules enforced by the rewriter:
-- Only literals **lexically inside** a target class (nested types included) are touched.
+Rules enforced:
+- Literals **lexically inside** a target class are touched — including **nested types** and the
+  class's **`extension`s** (extension literals share the class's `(class, file)` namespace).
 - **Interpolated** literals (`"id=\(x)"`) are skipped — they cannot be static secrets.
+- **Enum string raw values** (`case a = "x"`) are left as literals — Swift requires an enum raw value
+  to be a literal, so rewriting them would break the build.
 - Namespace is keyed per `(class, file)` → no collisions, and re-running is **idempotent**.
 - Escapes, raw strings (`#"…"#`), multiline (`"""…"""`), unicode/emoji are preserved verbatim.
+
+**Single source of truth.** `ClassStringCollector` (a `SyntaxVisitor`, which walks the real tree with
+reliable scope/parent information) decides *what* to obfuscate — scoping, extensions, interpolation,
+and enum-raw-value skipping. The `SyntaxRewriter` only *applies* those decisions by source position.
+This keeps `appvault-scan` (preview) and `appvault-obfuscate` (rewrite) in exact agreement, and avoids
+relying on a `SyntaxRewriter`'s unreliable parent pointers.
 
 ---
 
@@ -112,8 +121,26 @@ The requirement is **minimal-to-no change on the client (app) side**. Two models
 - Useful for a quick demo or a one-shot; not preferred when "no client source change" is a hard
   requirement.
 
-> For XYZ_Bank we recommend **5a**. The app's only persistent change is the AppVault version bump in
-> `Package.resolved`; application source stays byte-for-byte unchanged.
+### 5c. Package-scoped, in-place at build time with restore (recommended)
+- The client names **folders ("packages")** in `appvault-classes.yml` (`packages:`), and every class
+  inside is obfuscated. No per-class list, and **no file relocation**.
+- Two Xcode Run Script phases wrap the compile (`Scripts/appvault-inplace.sh`):
+  - **stage** (before Compile Sources): back up each pristine original, then obfuscate it in place.
+  - **restore** (last phase): put the originals back from the backup.
+- The compiler builds the obfuscated form; after the build the working tree is **byte-for-byte
+  unchanged**, and nothing obfuscated is committed. `stage` restores leftovers first, so an
+  interrupted build self-heals on the next one.
+- **Client footprint:** the package dependency + two Run Script phases + one `packages:` config.
+  Application source and project structure are otherwise untouched — the closest iOS analog to a
+  bytecode transform available on some other platforms.
+- Backups live in a build-local directory (`DERIVED_FILE_DIR`/`TMPDIR`), never the source tree.
+- **Tradeoff:** between a cancelled build and the next, on-disk files may transiently hold the
+  obfuscated form; the next `stage` (or an explicit `restore`) returns them. This is inherent to
+  source-level build obfuscation on a platform with no cheap bytecode-rewrite hook.
+
+> For XYZ_Bank we recommend **5c**: it needs no `Protected/`/`Generated/` restructuring. The app's
+> only persistent change is the build phases + the AppVault version bump in `Package.resolved`;
+> application source stays byte-for-byte unchanged.
 
 Constraint behind the model: a SwiftPM build-tool plugin cannot *exclude* a target's own source
 files, so it cannot replace in-place literals automatically. The mirror model (compile a transformed
@@ -142,6 +169,11 @@ Verification is **evidence-based**, not assumed:
 
 ## 7. Known caveats
 
+- **Literal-required / access-restricted positions.** A `StaticString`-typed property or parameter,
+  and a **default argument value of a `public`/`open` method**, must be initialised from a literal at
+  least as accessible as the declaration; the generated namespace is `private`, so rewriting these
+  would not compile. These are **not yet auto-detected** — keep such members out of a targeted class.
+  (Enum string raw values, the most common literal-required case, *are* detected and left untouched.)
 - **Semantic-sensitive literals.** Replacing a literal with a runtime `String` can change meaning
   where the literal is **not** a plain `String`: SwiftUI `Text("…")` / `Image("…")`
   (`LocalizedStringKey`), `#selector`, `@objc` names, dictionary-literal keys. Keep those classes out
@@ -159,15 +191,18 @@ Verification is **evidence-based**, not assumed:
 
 | Suite | What it covers | Result |
 |---|---|---|
-| Unit (`swift test`) | scoping, interpolation skip, nesting, struct/non-target ignore, wildcard, import dedup, escapes/raw/multiline, idempotency, config parsing | 18 pass |
-| Robustness | 5k literals, deep nesting (realistic + pathological), malformed Swift, empty, interpolation-only, unicode/emoji, 200k-char string, 300-class wildcard | 10 pass |
-| Integration (`Scripts/integration-test.sh`) | end-to-end mirror build → compile → run → binary scan + controls | 16 checks pass |
-| CLI hang guard | 20k-literal file, 1 MB string, broken source, empty, wildcard in-place — each under a 20s watchdog | no hang, clean exit |
+| Unit (`swift test`) | scoping, **extensions**, **enum raw-value skip**, interpolation skip, nesting, struct/non-target ignore, wildcard, import dedup, escapes/raw/multiline, idempotency, config parsing (`packages:`, `#`-in-value, CRLF) | 29 pass |
+| Robustness (`swift test`) | 5k literals, deep + pathological nesting, malformed Swift, empty, interpolation-only, unicode/emoji, 200k-char string, 300-class wildcard, **blank-line-heavy + many-import hang guards** | 12 pass |
+| Batch runner (`swift test`) | mirror layout preserved, passthrough, **write-failure resilience**, missing output throws | 3 pass |
+| In-place runner (`swift test`) | **stage obfuscates a package in place; restore returns the source byte-for-byte**; nothing-to-do skip; idempotent cycles | 4 pass |
+| Integration (`Scripts/integration-test.sh`) | end-to-end mirror build → compile → run → binary scan + controls, incl. **enum raw value + extension secret** | 20 checks pass |
+| In-place e2e (`Scripts/inplace-test.sh`) | **stage → compile → run → binary scan → restore** round-trip; source restored byte-for-byte | 13 checks pass |
+| CLI (`Scripts/cli-test.sh`) | arg safety (`--in-place`/`--output` mutual-exclusion, missing/flag values, scan↔obfuscate `*` parity, always-write `--output`, missing-source warning) + **watchdog hang guard** (blank-line file, 1 MB string, malformed) | 12 checks pass |
 | Live app (iPhone 17 sim) | app launch, SDK calls, menu interaction, background — no crash, no crash reports | stable |
 
 Run everything:
 ```bash
-cd AppVault && swift test && ./Scripts/integration-test.sh
+cd AppVault && swift test && ./Scripts/integration-test.sh && ./Scripts/inplace-test.sh && ./Scripts/cli-test.sh
 ```
 
 ---

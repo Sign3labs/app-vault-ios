@@ -1,18 +1,21 @@
-# appvault-classes.yml -- config for class-scoped string obfuscation (Part 1).
+# appvault-classes.yml -- config for class-scoped string obfuscation.
 #
-# The build hook reads every .swift file under `sources`, obfuscates the string literals inside the
-# `classes` listed, and writes the transformed copies into `output`. Originals are never modified.
+# RECOMMENDED: name the folders ("packages") that hold your secret-bearing code;
+# EVERY class inside them is obfuscated. Used with the in-place build hook
+# (Scripts/appvault-inplace.sh), your source files are obfuscated only during the build and restored
+# afterwards -- no files move, nothing is committed in obfuscated form, the working tree is unchanged.
+packages:
+  - MyApp/Secure          # folder(s) whose classes should be obfuscated
+
+# -------------------------------------------------------------------------------------------------
+# ALTERNATIVE: finer-grained control. Pick exact classes, and/or use the "mirror" build model
+# (Scripts/appvault-build-phase.sh), which compiles a transformed copy and keeps originals out of
+# the target. `sources` + `classes` (+ `output` for mirror mode):
 #
-# IMPORTANT: keep `sources` OUTSIDE your target's compiled sources, and compile `output` instead
-# (see README "Class-scoped obfuscation"). Otherwise both the plaintext original and the obfuscated
-# copy compile, causing duplicate-symbol errors.
-
-sources:
-  - Protected          # folder(s) or file(s) holding the classes to protect (not compiled directly)
-
-output: .build/appvault-obfuscated   # generated mirror the build compiles
-
-classes:
-  - ApiClient
-  - LoginManager
-  # - "*"              # or obfuscate every class found (review the SwiftUI/@objc caveats first)
+# sources:
+#   - MyApp/Protected     # folder(s) or file(s) to read
+# classes:
+#   - ApiClient
+#   - LoginManager
+#   # - "*"               # or every class found
+# output: Generated       # (mirror mode only) a folder the target DOES compile
